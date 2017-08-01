@@ -48,13 +48,11 @@ def plot_curve(args):
 
     plt.figure(1)
     plt.plot(train_epoch, train_loss, linewidth=2, label='train loss')
-    plt.plot(train_epoch, ave_train_loss, linewidth=2, label='average train loss')
+    # plt.plot(train_epoch, ave_train_loss, linewidth=2, label='average train loss')
     plt.plot(train_epoch, base_loss, linewidth=2, label='base loss')
     plt.plot(test_epoch, ave_test_loss, linewidth=2, label='average test loss')
     plt.grid()
     plt.legend(loc='best')
-
-    print(args)
 
     if args.save_display:
         plt.savefig(os.path.join(args.save_dir, 'loss.png'))

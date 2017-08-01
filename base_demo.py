@@ -1,4 +1,5 @@
 import os
+import sys
 import numpy
 import torch
 import torch.nn as nn
@@ -7,9 +8,15 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 
 from learning_args import parse_args
-from data.mnist_data import MnistData
-from data.box_data import BoxData
-from data.box_mnist_data import BoxMnistData
+from data.synthetic.box_data import BoxData
+from data.synthetic.box_data_complex import BoxDataComplex
+from data.synthetic.mnist_data import MnistData
+from data.synthetic.box2_data import Box2Data
+from data.synthetic.mnist2_data import Mnist2Data
+from data.real.robot64_data import Robot64Data
+from data.real.mpii64_data import Mpii64Data
+from data.real.mpii64_sample import Mpii64Sample
+from data.real.nyuv2_data import Nyuv2Data
 from base_model import BaseNet, BaseGtNet
 from visualize.base_visualizer import BaseVisualizer
 import logging
@@ -25,25 +32,41 @@ class BaseDemo(object):
         self.test_interval = args.test_interval
         self.save_dir = args.save_dir
         self.display = args.display
+        self.display_all = args.display_all
         self.best_improve_percent = -1e10
         self.batch_size = args.batch_size
         self.im_size = args.image_size
+        self.im_channel = args.image_channel
         self.num_frame = args.num_frame
         self.m_range = args.motion_range
         if args.data == 'box':
             self.data = BoxData(args)
+        elif args.data == 'box_complex':
+            self.data = BoxDataComplex(args)
         elif args.data == 'mnist':
             self.data = MnistData(args)
-        elif args.data == 'box_mnist':
-            self.data = BoxMnistData(args)
+        elif args.data == 'box2':
+            self.data = Box2Data(args)
+        elif args.data == 'mnist2':
+            self.data = Mnist2Data(args)
+        elif args.data == 'robot64':
+            self.data = Robot64Data(args)
+        elif args.data == 'mpii64':
+            self.data = Mpii64Data(args)
+        elif args.data == 'mpii64_sample':
+            self.data = Mpii64Sample(args)
+        elif args.data == 'nyuv2':
+            self.data = Nyuv2Data(args)
+        else:
+            logging.error('%s data not supported' % args.data)
         self.init_model_path = args.init_model_path
         self.model, self.model_gt = self.init_model(self.data.m_kernel)
         self.visualizer = BaseVisualizer(args, self.data.reverse_m_dict)
 
     def init_model(self, m_kernel):
-        self.model = BaseNet(self.im_size, self.im_size, 3, self.num_frame - 1,
+        self.model = BaseNet(self.im_size, self.im_size, self.im_channel, self.num_frame - 1,
                              m_kernel.shape[1], self.m_range, m_kernel)
-        self.model_gt = BaseGtNet(self.im_size, self.im_size, 3, self.num_frame - 1,
+        self.model_gt = BaseGtNet(self.im_size, self.im_size, self.im_channel, self.num_frame - 1,
                                   m_kernel.shape[1], self.m_range, m_kernel)
         if torch.cuda.is_available():
             # model = torch.nn.DataParallel(model).cuda()
@@ -53,12 +76,20 @@ class BaseDemo(object):
             self.model.load_state_dict(torch.load(self.init_model_path))
         return self.model, self.model_gt
 
-    def train_unsupervised(self):
+    def train(self):
         optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
         base_loss, train_loss = [], []
         for epoch in range(self.train_epoch):
             optimizer.zero_grad()
-            im, _, _ = self.data.get_next_batch(self.data.train_images)
+            if self.data.name in ['box', 'mnist', 'box_complex']:
+                im, _, _, _ = self.data.get_next_batch(self.data.train_images)
+            elif self.data.name in ['box2', 'mnist2']:
+                im, _, _ = self.data.get_next_batch(self.data.train_images)
+            elif self.data.name in ['robot64', 'mpii64', 'nyuv2']:
+                im = self.data.get_next_batch(self.data.train_meta)
+            else:
+                logging.error('%s data not supported' % self.data.name)
+                sys.exit()
             im_input = im[:, :-1, :, :, :].reshape(self.batch_size, -1, self.im_size, self.im_size)
             im_output = im[:, -1, :, :, :]
             im_input = Variable(torch.from_numpy(im_input).float())
@@ -74,7 +105,7 @@ class BaseDemo(object):
             if len(train_loss) > 100:
                 train_loss.pop(0)
             ave_train_loss = sum(train_loss) / float(len(train_loss))
-            base_loss.append(torch.abs(im_input[:, -3:, :, :] - im_output).sum().data[0])
+            base_loss.append(torch.abs(im_input[:, -self.im_channel:, :, :] - im_output).sum().data[0])
             if len(base_loss) > 100:
                 base_loss.pop(0)
             ave_base_loss = sum(base_loss) / float(len(base_loss))
@@ -85,7 +116,7 @@ class BaseDemo(object):
                 self.validate()
 
     def validate(self):
-        improve_percent = self.test_unsupervised()
+        improve_percent = self.test()
         if improve_percent >= self.best_improve_percent:
             logging.info('model save to %s', os.path.join(self.save_dir, 'model.pth'))
             with open(os.path.join(self.save_dir, 'model.pth'), 'w') as handle:
@@ -93,65 +124,96 @@ class BaseDemo(object):
             self.best_improve_percent = improve_percent
         logging.info('current best improved percent: %.2f', self.best_improve_percent)
 
-    def test_unsupervised(self):
+    def test(self):
         base_loss, test_loss = [], []
         test_epe = []
         for epoch in range(self.test_epoch):
-            im, motion, _ = self.data.get_next_batch(self.data.test_images)
+            if self.data.name in ['box', 'mnist', 'box_complex']:
+                im, motion, _, _ = self.data.get_next_batch(self.data.test_images)
+            elif self.data.name in ['box2', 'mnist2']:
+                im, motion, _ = self.data.get_next_batch(self.data.test_images)
+            elif self.data.name in ['robot64', 'mpii64', 'nyuv2', 'mpii64_sample']:
+                im, motion = self.data.get_next_batch(self.data.test_meta), None
+            elif self.data.name in ['mpii64_sample']:
+                im, motion = self.data.get_next_batch(self.data.test_meta), None
+                im = im[:, -self.num_frame:, :, :, :]
+            else:
+                logging.error('%s data not supported' % self.data.name)
+                sys.exit()
             im_input = im[:, :-1, :, :, :].reshape(self.batch_size, -1, self.im_size, self.im_size)
             im_output = im[:, -1, :, :, :]
-            gt_motion = motion[:, -2, :, :, :]
             im_input = Variable(torch.from_numpy(im_input).float())
             im_output = Variable(torch.from_numpy(im_output).float())
-            gt_motion = Variable(torch.from_numpy(gt_motion).float())
             if torch.cuda.is_available():
                 im_input, im_output = im_input.cuda(), im_output.cuda()
-                gt_motion = gt_motion.cuda()
             im_pred, m_mask, disappear, appear = self.model(im_input)
             loss = torch.abs(im_pred - im_output).sum()
 
             test_loss.append(loss.data[0])
-            base_loss.append(torch.abs(im_input[:, -3:, :, :] - im_output).sum().data[0])
+            base_loss.append(torch.abs(im_input[:, -self.im_channel:, :, :] - im_output).sum().data[0])
             flow = self.motion2flow(m_mask)
-            epe = (flow - gt_motion) * (flow - gt_motion)
-            epe = torch.sqrt(epe.sum(1))
-            epe = epe.sum() / epe.numel()
-            test_epe.append(epe.cpu().data[0])
+
+            if motion is None:
+                gt_motion = None
+            else:
+                gt_motion = motion[:, -2, :, :, :]
+                gt_motion = Variable(torch.from_numpy(gt_motion).float())
+                if torch.cuda.is_available():
+                    gt_motion = gt_motion.cuda()
+                epe = (flow - gt_motion) * (flow - gt_motion)
+                epe = torch.sqrt(epe.sum(1))
+                epe = epe.sum() / epe.numel()
+                test_epe.append(epe.cpu().data[0])
             if self.display:
                 self.visualizer.visualize_result(im_input, im_output, im_pred, flow, gt_motion,
                                                  disappear, appear, 'test_%d.png' % epoch)
+            if self.display_all:
+                for i in range(self.batch_size):
+                    self.visualizer.visualize_result(im_input, im_output, im_pred, flow, gt_motion,
+                                                     disappear, appear, 'test_%d.png' % i, i)
         test_loss = numpy.mean(numpy.asarray(test_loss))
         base_loss = numpy.mean(numpy.asarray(base_loss))
         improve_loss = base_loss - test_loss
         improve_percent = improve_loss / (base_loss + 1e-5)
         logging.info('average test loss: %.2f, base loss: %.2f', test_loss, base_loss)
         logging.info('improve_loss: %.2f, improve_percent: %.2f', improve_loss, improve_percent)
-        test_epe = numpy.mean(numpy.asarray(test_epe))
-        logging.info('average test endpoint error: %.2f', test_epe)
+        if gt_motion is not None:
+            test_epe = numpy.mean(numpy.asarray(test_epe))
+            logging.info('average test endpoint error: %.2f', test_epe)
         return improve_percent
 
-    def test_gt_unsupervised(self):
+    def test_gt(self):
         base_loss, test_loss = [], []
         test_epe = []
         for epoch in range(self.test_epoch):
-            im, motion, depth = self.data.get_next_batch(self.data.test_images)
+            if self.data.name in ['box', 'mnist', 'box_complex']:
+                im, motion, motion_label, _ = self.data.get_next_batch(self.data.test_images)
+                gt_motion_label = motion_label[:, -2, :, :, :]
+                gt_motion_label = Variable(torch.from_numpy(gt_motion_label))
+                if torch.cuda.is_available():
+                    gt_motion_label = gt_motion_label.cuda()
+            elif self.data.name in ['box2', 'mnist2']:
+                im, motion, _ = self.data.get_next_batch(self.data.test_images)
+            else:
+                logging.error('%s data not supported in test_gt' % self.data.name)
+                sys.exit()
             im_input = im[:, :-1, :, :, :].reshape(self.batch_size, -1, self.im_size, self.im_size)
             im_output = im[:, -1, :, :, :]
             gt_motion = motion[:, -2, :, :, :]
-            gt_depth = depth[:, -2, :, :, :]
             im_input = Variable(torch.from_numpy(im_input).float())
             im_output = Variable(torch.from_numpy(im_output).float())
             gt_motion = Variable(torch.from_numpy(gt_motion).float())
-            gt_depth = Variable(torch.from_numpy(gt_depth))
             if torch.cuda.is_available():
                 im_input, im_output = im_input.cuda(), im_output.cuda()
                 gt_motion = gt_motion.cuda()
-                gt_depth = gt_depth.cuda()
-            im_pred, m_mask, disappear, appear = self.model_gt(im_input, gt_motion)
+            if self.data.name in ['box', 'mnist', 'box_complex']:
+                im_pred, m_mask, disappear, appear = self.model_gt(im_input, gt_motion_label, 'label')
+            elif self.data.name in['box2', 'mnist2']:
+                im_pred, m_mask, disappear, appear = self.model_gt(im_input, gt_motion)
             loss = torch.abs(im_pred - im_output).sum()
 
             test_loss.append(loss.data[0])
-            base_loss.append(torch.abs(im_input[:, -3:, :, :] - im_output).sum().data[0])
+            base_loss.append(torch.abs(im_input[:, -self.im_channel:, :, :] - im_output).sum().data[0])
             flow = self.motion2flow(m_mask)
             epe = (flow - gt_motion) * (flow - gt_motion)
             epe = torch.sqrt(epe.sum(1))
@@ -160,6 +222,10 @@ class BaseDemo(object):
             if self.display:
                 self.visualizer.visualize_result(im_input, im_output, im_pred, flow, gt_motion,
                                                  disappear, appear, 'test_gt.png')
+            if self.display_all:
+                for i in range(self.batch_size):
+                    self.visualizer.visualize_result(im_input, im_output, im_pred, flow, gt_motion,
+                                                     disappear, appear, 'test_gt_%d.png' % i, i)
         test_loss = numpy.mean(numpy.asarray(test_loss))
         base_loss = numpy.mean(numpy.asarray(base_loss))
         improve_loss = base_loss - test_loss
@@ -195,11 +261,11 @@ def main():
     logging.info(args)
     demo = BaseDemo(args)
     if args.train:
-        demo.train_unsupervised()
+        demo.train()
     if args.test:
-        demo.test_unsupervised()
+        demo.test()
     if args.test_gt:
-        demo.test_gt_unsupervised()
+        demo.test_gt()
 
 if __name__ == '__main__':
     main()

@@ -37,7 +37,7 @@ class BaseNet(nn.Module):
         self.conv = nn.Conv2d(num_hidden, n_class, 3, 1, 1)
 
         self.maxpool = nn.MaxPool2d(2, stride=2, return_indices=False, ceil_mode=False)
-        self.upsample = nn.UpsamplingBilinear2d(scale_factor=2)
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear')
 
         self.im_height = im_height
         self.im_width = im_width
@@ -49,6 +49,7 @@ class BaseNet(nn.Module):
         self.m_kernel = Variable(torch.from_numpy(m_kernel).float())
         if torch.cuda.is_available():
             self.m_kernel = self.m_kernel.cuda()
+        self.zero_m_idx = (n_class - 1) / 2
 
     def forward(self, im_input):
         x = self.bn0(self.conv0(im_input))
@@ -80,11 +81,9 @@ class BaseNet(nn.Module):
         x11 = F.relu(self.bn11(self.conv11(x11)))
         m_mask = F.softmax(self.conv(x11))
 
-        out_mask = F.conv2d(m_mask, self.m_kernel, None, 1, self.m_range, 1, self.m_kernel.size(0))
-        seg = construct_seg(out_mask, self.m_kernel, self.m_range)
-        appear = F.relu(1 - seg)
-        disappear = F.relu(seg - 1)
-        pred = construct_image(im_input[:, -self.im_channel:, :, :], out_mask, disappear, self.m_kernel, self.m_range)
+        out_mask, appear, disappear = construct_mask(m_mask, self.m_kernel, self.m_range, self.zero_m_idx)
+        im = im_input[:, -self.im_channel:, :, :]
+        pred = construct_image(im, out_mask, self.m_kernel, self.m_range)
         return pred, m_mask, disappear, appear
 
 
@@ -100,30 +99,46 @@ class BaseGtNet(nn.Module):
         self.m_kernel = Variable(torch.from_numpy(m_kernel).float())
         if torch.cuda.is_available():
             self.m_kernel = self.m_kernel.cuda()
+        self.zero_m_idx = (n_class - 1) / 2
 
-    def forward(self, im_input, gt_motion):
-        m_mask = self.motion2mask(gt_motion, self.n_class, self.m_range)
-        out_mask = F.conv2d(m_mask, self.m_kernel, None, 1, self.m_range, 1, self.m_kernel.size(0))
-        seg = construct_seg(out_mask, self.m_kernel, self.m_range)
-        appear = F.relu(1 - seg)
-        disappear = F.relu(seg - 1)
-        pred = construct_image(im_input[:, -self.im_channel:, :, :], out_mask, disappear, self.m_kernel, self.m_range)
+    def forward(self, im_input, gt_motion, gt_type=None):
+        if gt_type == 'label':
+            m_mask = self.label2mask(gt_motion)
+        else:
+            m_mask = self.motion2mask(gt_motion)
+
+        out_mask, appear, disappear = construct_mask(m_mask, self.m_kernel, self.m_range, self.zero_m_idx)
+        im = im_input[:, -self.im_channel:, :, :]
+        pred = construct_image(im, out_mask, self.m_kernel, self.m_range)
         return pred, m_mask, disappear, appear
 
-    def motion2mask(self, motion, n_class, m_range):
-        m_mask = Variable(torch.Tensor(motion.size(0), n_class, motion.size(2), motion.size(3)))
+    def label2mask(self, motion):
+        m_mask = Variable(torch.Tensor(motion.size(0), self.n_class, motion.size(2), motion.size(3)))
+        if torch.cuda.is_available():
+            m_mask = m_mask.cuda()
+        for i in range(motion.size(0)):
+            for j in range(self.n_class):
+                tmp = Variable(torch.zeros((motion.size(2), motion.size(3))))
+                if torch.cuda.is_available():
+                    tmp = tmp.cuda()
+                tmp[motion[i, 0, :, :] == j] = 1
+                m_mask[i, j, :, :] = tmp
+        return m_mask
+
+    def motion2mask(self, motion):
+        m_mask = Variable(torch.Tensor(motion.size(0), self.n_class, motion.size(2), motion.size(3)))
         if torch.cuda.is_available():
             m_mask = m_mask.cuda()
         motion_floor = torch.floor(motion.cpu().data).long()
         for i in range(motion.size(0)):
             for j in range(motion.size(2)):
                 for k in range(motion.size(3)):
-                    a = Variable(torch.zeros(int(math.sqrt(n_class))))
-                    b = Variable(torch.zeros(int(math.sqrt(n_class))))
-                    idx = motion_floor[i, 0, j, k] + m_range
+                    a = Variable(torch.zeros(int(math.sqrt(self.n_class))))
+                    b = Variable(torch.zeros(int(math.sqrt(self.n_class))))
+                    idx = motion_floor[i, 0, j, k] + self.m_range
                     a[idx] = 1 - (motion[i, 0, j, k] - motion_floor[i, 0, j, k])
                     a[idx + 1] = 1 - a[idx]
-                    idx = motion_floor[i, 1, j, k] + m_range
+                    idx = motion_floor[i, 1, j, k] + self.m_range
                     b[idx] = 1 - (motion[i, 1, j, k] - motion_floor[i, 1, j, k])
                     b[idx + 1] = 1 - b[idx]
                     tmp = torch.ger(b, a)
@@ -131,17 +146,16 @@ class BaseGtNet(nn.Module):
         return m_mask
 
 
-def construct_seg(out_mask, m_kernel, m_range):
-    seg_expand = Variable(torch.ones(out_mask.size()))
-    if torch.cuda.is_available():
-        seg_expand = seg_expand.cuda()
-    nearby_seg = F.conv2d(seg_expand, m_kernel, None, 1, m_range, 1, m_kernel.size(0))
-    seg = (nearby_seg * out_mask).sum(1)
-    return seg
+def construct_mask(m_mask, m_kernel, m_range, zero_m_idx):
+    out_mask = F.conv2d(m_mask, m_kernel, None, 1, m_range, 1, m_kernel.size(0))
+    seg = out_mask.sum(1)
+    appear = F.relu(1 - seg)
+    disappear = F.relu(seg - 1)
+    out_mask[:, zero_m_idx, :, :] = F.relu(out_mask[:, zero_m_idx, :, :] - disappear)
+    return out_mask, appear, disappear
 
 
-def construct_image(im, out_mask, disappear, m_kernel, m_range):
-    im = im * (1 - disappear).expand_as(im)
+def construct_image(im, out_mask, m_kernel, m_range):
     pred = Variable(torch.Tensor(im.size()))
     if torch.cuda.is_available():
         pred = pred.cuda()
@@ -150,4 +164,3 @@ def construct_image(im, out_mask, disappear, m_kernel, m_range):
         nearby_im = F.conv2d(im_expand, m_kernel, None, 1, m_range, 1, m_kernel.size(0))
         pred[:, i, :, :] = (nearby_im * out_mask).sum(1)
     return pred
-
