@@ -1,0 +1,15 @@
+[INFO 2017-09-19 11:07:46,011 demo.py:213] Namespace(batch_size=64, bg_move=False, bg_noise=0.5, bidirection=False, data='robot64', diff_div_thresh=1.25, display=True, display_all=False, fg_noise=0.1, fixed_data=False, image_channel=3, image_size=64, init_model_path='./model.pth', learning_rate=0.001, max_diff_thresh=0.1, method='unsupervised', min_diff_thresh=0.01, motion_range=2, motion_type='affine', num_frame=3, num_objects=1, save_dir='./', save_display=True, save_display_dir='./', seed=111, test=True, test_epoch=20, test_gt=False, test_interval=100, train=False, train_epoch=1000)
+Traceback (most recent call last):
+  File "../demo.py", line 223, in <module>
+    main()
+  File "../demo.py", line 214, in main
+    demo = Demo(args)
+  File "../demo.py", line 21, in __init__
+    super(Demo, self).__init__(args)
+  File "/home/yi/code/video_motion2/base_demo.py", line 63, in __init__
+    self.model, self.model_gt = self.init_model(self.data.m_kernel)
+  File "../demo.py", line 35, in init_model
+    self.model.load_state_dict(torch.load(self.init_model_path))
+  File "/usr/local/lib/python2.7/dist-packages/torch/serialization.py", line 229, in load
+    f = open(f, 'rb')
+IOError: [Errno 2] No such file or directory: './model.pth'

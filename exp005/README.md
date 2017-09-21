@@ -13,12 +13,12 @@
 
 | Exp  | Test | Gt   | EPE  | Note |
 | ---- | ---- | ---- | ---- | ---- | 
-| 01 |  |  |  | box, m_range=2, image_size=32, num_frame=2, bg_move |
-| 01-1 |  |  |  | box_complex, m_range=2, image_size=32, num_frame=2, bg_move |
-| 02 |  |  |  | mnist, m_range=2, image_size=32, num_frame=2, bg_move |
-| 03 |  |  |  | robot64, m_range=2, image_size=64, num_frame=2 |
-| 04 |  |  |  | mpii64, m_range=2, image_size=64, num_frame=2 |
-| 05 |  |  |  | nyuv2, m_range=2, image_size=64, num_frame=2 |
+| 01   | 0.99 | 0.94 | 0.13 | box, m_range=2, image_size=32, num_frame=2, bg_move |
+| 01-1 | 0.95 | 0.86 | 0.19 | box_complex, m_range=2, image_size=32, num_frame=2, bg_move |
+| 02   | 0.94 | 0.92 | 0.32 | mnist, m_range=2, image_size=32, num_frame=2, bg_move |
+| 03   | 0.53 |  |  | robot64, m_range=2, image_size=64, num_frame=2 |
+| 04   | 0.63 |  |  | mpii64, m_range=2, image_size=64, num_frame=2 |
+| 05   | 0.57 |  |  | nyuv2, m_range=2, image_size=64, num_frame=2 |
 
 ### Take Home Message
 
