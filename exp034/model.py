@@ -63,7 +63,13 @@ class Net(nn.Module):
         self.conv_d = nn.Conv2d(num_hidden, 2, 3, 1, 1)
 
         self.conv0_v = nn.Conv2d(n_inputs*im_channel, num_hidden, 3, 1, 1)
+        self.bn0_v = nn.BatchNorm2d(num_hidden)
         self.conv1_v = nn.Conv2d(num_hidden, num_hidden, 3, 1, 1)
+        self.bn1_v = nn.BatchNorm2d(num_hidden)
+        self.conv2_v = nn.Conv2d(num_hidden, num_hidden, 3, 1, 1)
+        self.bn2_v = nn.BatchNorm2d(num_hidden)
+        self.conv3_v = nn.Conv2d(num_hidden, num_hidden, 3, 1, 1)
+        self.bn3_v = nn.BatchNorm2d(num_hidden)
         self.conv_v = nn.Conv2d(num_hidden, 3, 3, 1, 1)
 
         self.maxpool = nn.MaxPool2d(2, stride=2, return_indices=False, ceil_mode=False)
@@ -140,8 +146,10 @@ class Net(nn.Module):
         x11 = F.relu(self.bn11_d(self.conv11_d(x11)))
         d_mask = F.softmax(self.conv_d(x11))
 
-        x = F.relu(self.conv0_v(im_input))
-        x = F.relu(self.conv1_v(x))
+        x = F.relu(self.bn0_v(self.conv0_v(im_input)))
+        x = F.relu(self.bn1_v(self.conv1_v(x)))
+        x = F.relu(self.bn2_v(self.conv2_v(x)))
+        x = F.relu(self.bn3_v(self.conv3_v(x)))
         bg = F.sigmoid(self.conv_v(x))
 
         out_mask = construct_mask(m_mask, d_mask, self.m_kernel, self.m_range)
