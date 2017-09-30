@@ -13,7 +13,7 @@ from model import Net, GtNet
 from visualizer import Visualizer
 import logging
 logging.basicConfig(format='[%(levelname)s %(asctime)s %(filename)s:%(lineno)s] %(message)s',
-                            level=logging.INFO)
+                    level=logging.INFO)
 
 
 class Demo(BaseDemo):
@@ -94,8 +94,8 @@ class Demo(BaseDemo):
                 sys.exit()
             im_input = im[:, :-1, :, :, :].reshape(self.batch_size, -1, self.im_size, self.im_size)
             im_output = im[:, -1, :, :, :]
-            im_input = Variable(torch.from_numpy(im_input).float())
-            im_output = Variable(torch.from_numpy(im_output).float())
+            im_input = Variable(torch.from_numpy(im_input).float(), volatile=True)
+            im_output = Variable(torch.from_numpy(im_output).float(), volatile=True)
             if torch.cuda.is_available():
                 im_input, im_output = im_input.cuda(), im_output.cuda()
             im_pred, m_mask, conflict = self.model(im_input, im_output)
@@ -154,8 +154,8 @@ class Demo(BaseDemo):
             im_input = im[:, :-1, :, :, :].reshape(self.batch_size, -1, self.im_size, self.im_size)
             im_output = im[:, -1, :, :, :]
             gt_motion = motion[:, -2, :, :, :]
-            im_input = Variable(torch.from_numpy(im_input).float())
-            im_output = Variable(torch.from_numpy(im_output).float())
+            im_input = Variable(torch.from_numpy(im_input).float(), volatile=True)
+            im_output = Variable(torch.from_numpy(im_output).float(), volatile=True)
             gt_motion = Variable(torch.from_numpy(gt_motion).float())
             if torch.cuda.is_available():
                 im_input, im_output = im_input.cuda(), im_output.cuda()
